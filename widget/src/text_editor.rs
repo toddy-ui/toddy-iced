@@ -117,6 +117,8 @@ where
     class: Theme::Class<'a>,
     key_binding: Option<Box<dyn Fn(KeyPress) -> Option<Binding<Message>> + 'a>>,
     on_edit: Option<Box<dyn Fn(Action) -> Message + 'a>>,
+    on_focus: Option<Box<dyn Fn() -> Message + 'a>>,
+    on_blur: Option<Box<dyn Fn() -> Message + 'a>>,
     purpose: Option<input_method::Purpose>,
     highlighter_settings: Highlighter::Settings,
     highlighter_format: fn(&Highlighter::Highlight, &Theme) -> highlighter::Format<Renderer::Font>,
@@ -146,6 +148,8 @@ where
             class: <Theme as Catalog>::default(),
             key_binding: None,
             on_edit: None,
+            on_focus: None,
+            on_blur: None,
             purpose: None,
             highlighter_settings: (),
             highlighter_format: |_highlight, _theme| highlighter::Format::default(),
@@ -203,6 +207,30 @@ where
     /// If this method is not called, the [`TextEditor`] will be disabled.
     pub fn on_action(mut self, on_edit: impl Fn(Action) -> Message + 'a) -> Self {
         self.on_edit = Some(Box::new(on_edit));
+        self
+    }
+
+    /// Sets a callback that produces a message when the [`TextEditor`] gains focus.
+    pub fn on_focus(mut self, f: impl Fn() -> Message + 'a) -> Self {
+        self.on_focus = Some(Box::new(f));
+        self
+    }
+
+    /// Sets a callback that produces a message when the [`TextEditor`] gains focus, if `Some`.
+    pub fn on_focus_maybe(mut self, f: Option<impl Fn() -> Message + 'a>) -> Self {
+        self.on_focus = f.map(|f| Box::new(f) as _);
+        self
+    }
+
+    /// Sets a callback that produces a message when the [`TextEditor`] loses focus.
+    pub fn on_blur(mut self, f: impl Fn() -> Message + 'a) -> Self {
+        self.on_blur = Some(Box::new(f));
+        self
+    }
+
+    /// Sets a callback that produces a message when the [`TextEditor`] loses focus, if `Some`.
+    pub fn on_blur_maybe(mut self, f: Option<impl Fn() -> Message + 'a>) -> Self {
+        self.on_blur = f.map(|f| Box::new(f) as _);
         self
     }
 
@@ -280,6 +308,8 @@ where
             class: self.class,
             key_binding: self.key_binding,
             on_edit: self.on_edit,
+            on_focus: self.on_focus,
+            on_blur: self.on_blur,
             purpose: self.purpose,
             highlighter_settings: settings,
             highlighter_format: to_format,
@@ -870,6 +900,22 @@ where
                 Status::Active
             }
         };
+
+        // Emit focus/blur messages on status transitions.
+        let was_focused = self
+            .last_status
+            .is_some_and(|s| matches!(s, Status::Focused { .. }));
+        let is_focused = matches!(status, Status::Focused { .. });
+
+        if !was_focused && is_focused {
+            if let Some(ref f) = self.on_focus {
+                shell.publish(f());
+            }
+        } else if was_focused && !is_focused {
+            if let Some(ref f) = self.on_blur {
+                shell.publish(f());
+            }
+        }
 
         if is_redraw {
             self.last_status = Some(status);

@@ -68,6 +68,7 @@ where
     content: Element<'a, Message, Theme, Renderer>,
     tooltip: Element<'a, Message, Theme, Renderer>,
     tooltip_text: Option<String>,
+    tooltip_id: widget::Id,
     position: Position,
     gap: f32,
     padding: f32,
@@ -96,6 +97,7 @@ where
             content: content.into(),
             tooltip: tooltip.into(),
             tooltip_text: None,
+            tooltip_id: widget::Id::unique(),
             position,
             gap: 0.0,
             padding: Self::DEFAULT_PADDING,
@@ -391,12 +393,29 @@ where
             );
 
             if let Some(ref text) = self.tooltip_text {
+                // Emit the tooltip accessible node with its unique ID.
+                // The a11y builder uses this ID to resolve described_by
+                // relationships from the child widget.
                 operation.accessible(
-                    None,
+                    Some(&self.tooltip_id),
                     layout.bounds(),
                     &Accessible {
                         role: Role::Tooltip,
                         label: Some(text.as_str()),
+                        described_by: None,
+                        ..Accessible::default()
+                    },
+                );
+
+                // Emit a described_by relationship from the child to the
+                // tooltip. This adds an auxiliary accessible node that tells
+                // screen readers the child is described by the tooltip text.
+                operation.accessible(
+                    None,
+                    layout.bounds(),
+                    &Accessible {
+                        role: Role::default(),
+                        described_by: Some(&self.tooltip_id),
                         ..Accessible::default()
                     },
                 );

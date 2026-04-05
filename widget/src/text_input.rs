@@ -114,6 +114,8 @@ where
     on_input: Option<Box<dyn Fn(String) -> Message + 'a>>,
     on_paste: Option<Box<dyn Fn(String) -> Message + 'a>>,
     on_submit: Option<Message>,
+    on_focus: Option<Message>,
+    on_blur: Option<Message>,
     icon: Option<Icon<Renderer::Font>>,
     class: Theme::Class<'a>,
     last_status: Option<Status>,
@@ -146,6 +148,8 @@ where
             on_input: None,
             on_paste: None,
             on_submit: None,
+            on_focus: None,
+            on_blur: None,
             icon: None,
             class: Theme::default(),
             last_status: None,
@@ -201,6 +205,30 @@ where
     /// focused and the enter key is pressed, if `Some`.
     pub fn on_submit_maybe(mut self, on_submit: Option<Message>) -> Self {
         self.on_submit = on_submit;
+        self
+    }
+
+    /// Sets the message that should be produced when the [`TextInput`] gains focus.
+    pub fn on_focus(mut self, message: Message) -> Self {
+        self.on_focus = Some(message);
+        self
+    }
+
+    /// Sets the message that should be produced when the [`TextInput`] gains focus, if `Some`.
+    pub fn on_focus_maybe(mut self, on_focus: Option<Message>) -> Self {
+        self.on_focus = on_focus;
+        self
+    }
+
+    /// Sets the message that should be produced when the [`TextInput`] loses focus.
+    pub fn on_blur(mut self, message: Message) -> Self {
+        self.on_blur = Some(message);
+        self
+    }
+
+    /// Sets the message that should be produced when the [`TextInput`] loses focus, if `Some`.
+    pub fn on_blur_maybe(mut self, on_blur: Option<Message>) -> Self {
+        self.on_blur = on_blur;
         self
     }
 
@@ -1308,6 +1336,22 @@ where
         } else {
             Status::Active
         };
+
+        // Emit focus/blur messages on status transitions.
+        let was_focused = self
+            .last_status
+            .is_some_and(|s| matches!(s, Status::Focused { .. }));
+        let is_focused = matches!(status, Status::Focused { .. });
+
+        if !was_focused && is_focused {
+            if let Some(message) = self.on_focus.clone() {
+                shell.publish(message);
+            }
+        } else if was_focused && !is_focused {
+            if let Some(message) = self.on_blur.clone() {
+                shell.publish(message);
+            }
+        }
 
         if let Event::Window(window::Event::RedrawRequested(_now)) = event {
             self.last_status = Some(status);
