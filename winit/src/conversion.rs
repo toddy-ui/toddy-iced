@@ -1140,6 +1140,14 @@ pub fn ime_purpose(purpose: input_method::Purpose) -> winit::window::ImePurpose 
         input_method::Purpose::Normal => winit::window::ImePurpose::Normal,
         input_method::Purpose::Secure => winit::window::ImePurpose::Password,
         input_method::Purpose::Terminal => winit::window::ImePurpose::Terminal,
+        // winit does not expose fine-grained IME purpose variants yet.
+        // Fall back to Normal so the keyboard is at least usable.
+        input_method::Purpose::Number
+        | input_method::Purpose::Decimal
+        | input_method::Purpose::Phone
+        | input_method::Purpose::Email
+        | input_method::Purpose::Url
+        | input_method::Purpose::Search => winit::window::ImePurpose::Normal,
     }
 }
 

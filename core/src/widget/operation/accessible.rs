@@ -39,6 +39,13 @@ pub enum Role {
     /// A generic container grouping related widgets.
     #[default]
     Group,
+    /// A container with no special semantic role.
+    ///
+    /// Unlike [`Group`](Self::Group), which implies a grouping
+    /// relationship between its children, `GenericContainer` is
+    /// semantically neutral. Use it for layout wrappers that carry
+    /// no meaning for assistive technology.
+    GenericContainer,
     /// A heading element (used with levels 1--6).
     Heading,
     /// A raster or vector image.

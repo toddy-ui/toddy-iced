@@ -278,6 +278,7 @@ fn convert_role(role: IcedRole) -> Role {
         IcedRole::Dialog => Role::Dialog,
         IcedRole::Document => Role::Document,
         IcedRole::Group => Role::Group,
+        IcedRole::GenericContainer => Role::GenericContainer,
         IcedRole::Heading => Role::Heading,
         IcedRole::Image => Role::Image,
         IcedRole::Label => Role::Label,

@@ -81,6 +81,18 @@ pub enum Purpose {
     ///
     /// For example, that could alter OSK on Wayland to show extra buttons.
     Terminal,
+    /// Numeric input (integers).
+    Number,
+    /// Decimal number input (integers and fractions).
+    Decimal,
+    /// Telephone number input.
+    Phone,
+    /// Email address input.
+    Email,
+    /// URL input.
+    Url,
+    /// Search query input.
+    Search,
 }
 
 impl InputMethod {
