@@ -77,6 +77,7 @@ where
     auto_scroll: bool,
     content: Element<'a, Message, Theme, Renderer>,
     on_scroll: Option<Box<dyn Fn(Viewport) -> Message + 'a>>,
+    on_status_change: Option<Box<dyn Fn(&str) -> Message + 'a>>,
     class: Theme::Class<'a>,
     last_status: Option<Status>,
 }
@@ -104,6 +105,7 @@ where
             auto_scroll: false,
             content: content.into(),
             on_scroll: None,
+            on_status_change: None,
             class: Theme::default(),
             last_status: None,
         }
@@ -158,6 +160,18 @@ where
     /// The function takes the [`Viewport`] of the [`Scrollable`]
     pub fn on_scroll(mut self, f: impl Fn(Viewport) -> Message + 'a) -> Self {
         self.on_scroll = Some(Box::new(f));
+        self
+    }
+
+    /// Sets the callback for status change notifications.
+    ///
+    /// The callback receives the new status name as a string
+    /// (e.g. "active", "hovered", "dragged").
+    pub fn on_status_change(
+        mut self,
+        f: impl Fn(&str) -> Message + 'a,
+    ) -> Self {
+        self.on_status_change = Some(Box::new(f));
         self
     }
 
@@ -1100,17 +1114,28 @@ where
             }
         };
 
-        if let Event::Window(window::Event::RedrawRequested(_now)) = event {
-            self.last_status = Some(status);
+        let new_name = status_name(&status);
+        let old_name = self.last_status.as_ref().map(status_name);
+        if old_name != Some(new_name) {
+            if let Some(ref on_status_change) = self.on_status_change {
+                shell.publish(on_status_change(new_name));
+            }
         }
 
-        if last_offsets != (state.offset_x, state.offset_y)
-            || self
-                .last_status
-                .is_some_and(|last_status| last_status != status)
-        {
+        let status_changed = self.last_status.is_some_and(|s| s != status)
+            || self.last_status.is_none();
+
+        if status_changed {
+            if !matches!(event, Event::Window(window::Event::RedrawRequested(_))) {
+                shell.request_redraw();
+            }
+        }
+
+        if last_offsets != (state.offset_x, state.offset_y) {
             shell.request_redraw();
         }
+
+        self.last_status = Some(status);
     }
 
     fn draw(
@@ -2147,6 +2172,14 @@ pub enum Status {
         /// Whether or not the vertical scrollbar is disabled meaning the content isn't overflowing.
         is_vertical_scrollbar_disabled: bool,
     },
+}
+
+fn status_name(status: &Status) -> &'static str {
+    match status {
+        Status::Active { .. } => "active",
+        Status::Hovered { .. } => "hovered",
+        Status::Dragged { .. } => "dragged",
+    }
 }
 
 /// The appearance of a scrollable.

@@ -174,6 +174,7 @@ where
     handle: Handle<Renderer::Font>,
     class: <Theme as Catalog>::Class<'a>,
     menu_class: <Theme as menu::Catalog>::Class<'a>,
+    on_status_change: Option<Box<dyn Fn(&str) -> Message + 'a>>,
     last_status: Option<Status>,
     menu_height: Length,
 }
@@ -208,6 +209,7 @@ where
             handle: Handle::default(),
             class: <Theme as Catalog>::default(),
             menu_class: <Theme as Catalog>::default_menu(),
+            on_status_change: None,
             last_status: None,
             menu_height: Length::Shrink,
         }
@@ -324,6 +326,18 @@ where
     #[must_use]
     pub fn menu_class(mut self, class: impl Into<<Theme as menu::Catalog>::Class<'a>>) -> Self {
         self.menu_class = class.into();
+        self
+    }
+
+    /// Sets the callback for status change notifications.
+    ///
+    /// The callback receives the new status name as a string
+    /// (e.g. "active", "hovered", "opened", "focused", "disabled").
+    pub fn on_status_change(
+        mut self,
+        f: impl Fn(&str) -> Message + 'a,
+    ) -> Self {
+        self.on_status_change = Some(Box::new(f));
         self
     }
 }
@@ -664,14 +678,22 @@ where
             }
         };
 
-        if let Event::Window(window::Event::RedrawRequested(_now)) = event {
-            self.last_status = Some(status);
-        } else if self
-            .last_status
-            .is_some_and(|last_status| last_status != status)
-        {
-            shell.request_redraw();
+        let new_name = status_name(&status);
+        let old_name = self.last_status.as_ref().map(status_name);
+        if old_name != Some(new_name) {
+            if let Some(ref on_status_change) = self.on_status_change {
+                shell.publish(on_status_change(new_name));
+            }
         }
+
+        if self.last_status.is_some_and(|s| s != status)
+            || self.last_status.is_none()
+        {
+            if !matches!(event, Event::Window(window::Event::RedrawRequested(_))) {
+                shell.request_redraw();
+            }
+        }
+        self.last_status = Some(status);
     }
 
     fn mouse_interaction(
@@ -1002,6 +1024,16 @@ pub enum Status {
     Focused,
     /// The [`PickList`] is disabled.
     Disabled,
+}
+
+fn status_name(status: &Status) -> &'static str {
+    match status {
+        Status::Active => "active",
+        Status::Hovered => "hovered",
+        Status::Opened { .. } => "opened",
+        Status::Focused => "focused",
+        Status::Disabled => "disabled",
+    }
 }
 
 /// The appearance of a pick list.

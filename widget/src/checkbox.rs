@@ -100,6 +100,7 @@ where
     wrapping: text::Wrapping,
     font: Option<Renderer::Font>,
     icon: Icon<Renderer::Font>,
+    on_status_change: Option<Box<dyn Fn(&str) -> Message + 'a>>,
     class: Theme::Class<'a>,
     last_status: Option<Status>,
 }
@@ -136,6 +137,7 @@ where
                 line_height: text::LineHeight::default(),
                 shaping: text::Shaping::Basic,
             },
+            on_status_change: None,
             class: Theme::default(),
             last_status: None,
         }
@@ -225,6 +227,18 @@ where
     /// Sets the [`Icon`] of the [`Checkbox`].
     pub fn icon(mut self, icon: Icon<Renderer::Font>) -> Self {
         self.icon = icon;
+        self
+    }
+
+    /// Sets the callback for status change notifications.
+    ///
+    /// The callback receives the new status name as a string
+    /// (e.g. "active", "hovered", "focused", "disabled").
+    pub fn on_status_change(
+        mut self,
+        f: impl Fn(&str) -> Message + 'a,
+    ) -> Self {
+        self.on_status_change = Some(Box::new(f));
         self
     }
 
@@ -409,14 +423,22 @@ where
             }
         };
 
-        if let Event::Window(window::Event::RedrawRequested(_now)) = event {
-            self.last_status = Some(current_status);
-        } else if self
-            .last_status
-            .is_some_and(|status| status != current_status)
-        {
-            shell.request_redraw();
+        let new_name = status_name(&current_status);
+        let old_name = self.last_status.as_ref().map(status_name);
+        if old_name != Some(new_name) {
+            if let Some(ref on_status_change) = self.on_status_change {
+                shell.publish(on_status_change(new_name));
+            }
         }
+
+        if self.last_status.is_some_and(|s| s != current_status)
+            || self.last_status.is_none()
+        {
+            if !matches!(event, Event::Window(window::Event::RedrawRequested(_))) {
+                shell.request_redraw();
+            }
+        }
+        self.last_status = Some(current_status);
     }
 
     fn mouse_interaction(
@@ -604,6 +626,15 @@ pub enum Status {
         /// Indicates if the [`Checkbox`] is currently checked.
         is_checked: bool,
     },
+}
+
+fn status_name(status: &Status) -> &'static str {
+    match status {
+        Status::Active { .. } => "active",
+        Status::Hovered { .. } => "hovered",
+        Status::Focused { .. } => "focused",
+        Status::Disabled { .. } => "disabled",
+    }
 }
 
 /// The style of a checkbox.

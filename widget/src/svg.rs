@@ -54,7 +54,7 @@ pub use crate::core::svg::Handle;
 ///     svg("tiger.svg").into()
 /// }
 /// ```
-pub struct Svg<'a, Theme = crate::Theme>
+pub struct Svg<'a, Message, Theme = crate::Theme>
 where
     Theme: Catalog,
 {
@@ -65,13 +65,14 @@ where
     class: Theme::Class<'a>,
     rotation: Rotation,
     opacity: f32,
+    on_status_change: Option<Box<dyn Fn(&str) -> Message + 'a>>,
     status: Option<Status>,
     alt: Option<String>,
     description: Option<String>,
     decorative: bool,
 }
 
-impl<'a, Theme> Svg<'a, Theme>
+impl<'a, Message, Theme> Svg<'a, Message, Theme>
 where
     Theme: Catalog,
 {
@@ -85,6 +86,7 @@ where
             class: Theme::default(),
             rotation: Rotation::default(),
             opacity: 1.0,
+            on_status_change: None,
             status: None,
             alt: None,
             description: None,
@@ -183,9 +185,21 @@ where
         self.decorative = true;
         self
     }
+
+    /// Sets the callback for status change notifications.
+    ///
+    /// The callback receives the new status name as a string
+    /// (e.g. "idle", "hovered").
+    pub fn on_status_change(
+        mut self,
+        f: impl Fn(&str) -> Message + 'a,
+    ) -> Self {
+        self.on_status_change = Some(Box::new(f));
+        self
+    }
 }
 
-impl<Message, Theme, Renderer> Widget<Message, Theme, Renderer> for Svg<'_, Theme>
+impl<Message, Theme, Renderer> Widget<Message, Theme, Renderer> for Svg<'_, Message, Theme>
 where
     Renderer: svg::Renderer,
     Theme: Catalog,
@@ -247,11 +261,20 @@ where
             Status::Idle
         };
 
-        if let Event::Window(window::Event::RedrawRequested(_now)) = event {
-            self.status = Some(current_status);
-        } else if self.status.is_some_and(|status| status != current_status) {
-            shell.request_redraw();
+        let new_name = status_name(&current_status);
+        let old_name = self.status.as_ref().map(status_name);
+        if old_name != Some(new_name) {
+            if let Some(ref on_status_change) = self.on_status_change {
+                shell.publish(on_status_change(new_name));
+            }
         }
+
+        if self.status.is_some_and(|s| s != current_status) || self.status.is_none() {
+            if !matches!(event, Event::Window(window::Event::RedrawRequested(_))) {
+                shell.request_redraw();
+            }
+        }
+        self.status = Some(current_status);
     }
 
     fn draw(
@@ -325,12 +348,14 @@ where
     }
 }
 
-impl<'a, Message, Theme, Renderer> From<Svg<'a, Theme>> for Element<'a, Message, Theme, Renderer>
+impl<'a, Message, Theme, Renderer> From<Svg<'a, Message, Theme>>
+    for Element<'a, Message, Theme, Renderer>
 where
+    Message: 'a,
     Theme: Catalog + 'a,
     Renderer: svg::Renderer + 'a,
 {
-    fn from(icon: Svg<'a, Theme>) -> Element<'a, Message, Theme, Renderer> {
+    fn from(icon: Svg<'a, Message, Theme>) -> Element<'a, Message, Theme, Renderer> {
         Element::new(icon)
     }
 }
@@ -342,6 +367,13 @@ pub enum Status {
     Idle,
     /// The [`Svg`] is being hovered.
     Hovered,
+}
+
+fn status_name(status: &Status) -> &'static str {
+    match status {
+        Status::Idle => "idle",
+        Status::Hovered => "hovered",
+    }
 }
 
 /// The appearance of an [`Svg`].

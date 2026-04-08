@@ -114,8 +114,7 @@ where
     on_input: Option<Box<dyn Fn(String) -> Message + 'a>>,
     on_paste: Option<Box<dyn Fn(String) -> Message + 'a>>,
     on_submit: Option<Message>,
-    on_focus: Option<Message>,
-    on_blur: Option<Message>,
+    on_status_change: Option<Box<dyn Fn(&str) -> Message + 'a>>,
     icon: Option<Icon<Renderer::Font>>,
     class: Theme::Class<'a>,
     last_status: Option<Status>,
@@ -148,8 +147,7 @@ where
             on_input: None,
             on_paste: None,
             on_submit: None,
-            on_focus: None,
-            on_blur: None,
+            on_status_change: None,
             icon: None,
             class: Theme::default(),
             last_status: None,
@@ -208,27 +206,15 @@ where
         self
     }
 
-    /// Sets the message that should be produced when the [`TextInput`] gains focus.
-    pub fn on_focus(mut self, message: Message) -> Self {
-        self.on_focus = Some(message);
-        self
-    }
-
-    /// Sets the message that should be produced when the [`TextInput`] gains focus, if `Some`.
-    pub fn on_focus_maybe(mut self, on_focus: Option<Message>) -> Self {
-        self.on_focus = on_focus;
-        self
-    }
-
-    /// Sets the message that should be produced when the [`TextInput`] loses focus.
-    pub fn on_blur(mut self, message: Message) -> Self {
-        self.on_blur = Some(message);
-        self
-    }
-
-    /// Sets the message that should be produced when the [`TextInput`] loses focus, if `Some`.
-    pub fn on_blur_maybe(mut self, on_blur: Option<Message>) -> Self {
-        self.on_blur = on_blur;
+    /// Sets the callback for status change notifications.
+    ///
+    /// The callback receives the new status name as a string
+    /// (e.g. "active", "hovered", "focused", "disabled").
+    pub fn on_status_change(
+        mut self,
+        f: impl Fn(&str) -> Message + 'a,
+    ) -> Self {
+        self.on_status_change = Some(Box::new(f));
         self
     }
 
@@ -1337,30 +1323,24 @@ where
             Status::Active
         };
 
-        // Emit focus/blur messages on status transitions.
-        let was_focused = self
-            .last_status
-            .is_some_and(|s| matches!(s, Status::Focused { .. }));
-        let is_focused = matches!(status, Status::Focused { .. });
-
-        if !was_focused && is_focused {
-            if let Some(message) = self.on_focus.clone() {
-                shell.publish(message);
-            }
-        } else if was_focused && !is_focused {
-            if let Some(message) = self.on_blur.clone() {
-                shell.publish(message);
+        let new_name = status_name(&status);
+        let old_name = self.last_status.as_ref().map(status_name);
+        if old_name != Some(new_name) {
+            if let Some(ref on_status_change) = self.on_status_change {
+                shell.publish(on_status_change(new_name));
             }
         }
 
-        if let Event::Window(window::Event::RedrawRequested(_now)) = event {
-            self.last_status = Some(status);
-        } else if self
+        if self
             .last_status
             .is_some_and(|last_status| status != last_status)
+            || self.last_status.is_none()
         {
-            shell.request_redraw();
+            if !matches!(event, Event::Window(window::Event::RedrawRequested(_))) {
+                shell.request_redraw();
+            }
         }
+        self.last_status = Some(status);
     }
 
     fn draw(
@@ -1683,6 +1663,15 @@ pub enum Status {
     },
     /// The [`TextInput`] cannot be interacted with.
     Disabled,
+}
+
+fn status_name(status: &Status) -> &'static str {
+    match status {
+        Status::Active => "active",
+        Status::Hovered => "hovered",
+        Status::Focused { .. } => "focused",
+        Status::Disabled => "disabled",
+    }
 }
 
 /// The appearance of a text input.

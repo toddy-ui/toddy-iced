@@ -84,6 +84,7 @@ where
     padding: Padding,
     clip: bool,
     label: Option<String>,
+    on_status_change: Option<Box<dyn Fn(&str) -> Message + 'a>>,
     class: Theme::Class<'a>,
     status: Option<Status>,
 }
@@ -120,6 +121,7 @@ where
             padding: DEFAULT_PADDING,
             clip: false,
             label: None,
+            on_status_change: None,
             class: Theme::default(),
             status: None,
         }
@@ -186,6 +188,18 @@ where
     /// icon-only buttons that have no text child.
     pub fn label(mut self, label: impl Into<String>) -> Self {
         self.label = Some(label.into());
+        self
+    }
+
+    /// Sets the callback for status change notifications.
+    ///
+    /// The callback receives the new status name as a string
+    /// (e.g. "active", "hovered", "pressed", "focused", "disabled").
+    pub fn on_status_change(
+        mut self,
+        f: impl Fn(&str) -> Message + 'a,
+    ) -> Self {
+        self.on_status_change = Some(Box::new(f));
         self
     }
 
@@ -441,11 +455,22 @@ where
             }
         };
 
-        if let Event::Window(window::Event::RedrawRequested(_now)) = event {
-            self.status = Some(current_status);
-        } else if self.status.is_some_and(|status| status != current_status) {
-            shell.request_redraw();
+        let new_name = status_name(&current_status);
+        let old_name = self.status.as_ref().map(status_name);
+        if old_name != Some(new_name) {
+            if let Some(ref on_status_change) = self.on_status_change {
+                shell.publish(on_status_change(new_name));
+            }
         }
+
+        if self.status.is_some_and(|status| status != current_status)
+            || self.status.is_none()
+        {
+            if !matches!(event, Event::Window(window::Event::RedrawRequested(_))) {
+                shell.request_redraw();
+            }
+        }
+        self.status = Some(current_status);
     }
 
     fn draw(
@@ -563,6 +588,16 @@ pub enum Status {
     Focused,
     /// The [`Button`] cannot be pressed.
     Disabled,
+}
+
+fn status_name(status: &Status) -> &'static str {
+    match status {
+        Status::Active => "active",
+        Status::Hovered => "hovered",
+        Status::Pressed => "pressed",
+        Status::Focused => "focused",
+        Status::Disabled => "disabled",
+    }
 }
 
 /// The style of a button.
