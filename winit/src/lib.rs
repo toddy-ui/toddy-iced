@@ -531,7 +531,10 @@ async fn run_instance<P>(
     let mut user_interfaces = ManuallyDrop::new(FxHashMap::default());
     let mut clipboard = Clipboard::new();
 
-    let mut pending_announcements: Vec<String> = Vec::new();
+    // Each announcement carries (text, is_assertive). Politeness is
+    // lifted to the AccessKit Live value at tree-build time via the
+    // a11y helper.
+    let mut pending_announcements: Vec<(String, bool)> = Vec::new();
     #[cfg(feature = "a11y")]
     let mut a11y_tree_dirty = true;
 
@@ -1414,6 +1417,20 @@ async fn run_instance<P>(
                         #[cfg(feature = "a11y")]
                         if a11y_tree_dirty {
                             let mut a11y_had_active = false;
+                            // Lift (text, assertive_bool) to (text, Live) so the
+                            // fork preserves the politeness hint the SDK sent.
+                            let announcements: Vec<(String, a11y::accesskit::Live)> =
+                                pending_announcements
+                                    .iter()
+                                    .map(|(text, assertive)| {
+                                        let live = if *assertive {
+                                            a11y::accesskit::Live::Assertive
+                                        } else {
+                                            a11y::accesskit::Live::Polite
+                                        };
+                                        (text.clone(), live)
+                                    })
+                                    .collect();
                             for (id, ui) in user_interfaces.iter_mut() {
                                 if let Some(window) = window_manager.get_mut(*id)
                                     && let Some(ref mut adapter) = window.adapter
@@ -1421,7 +1438,7 @@ async fn run_instance<P>(
                                 {
                                     a11y_had_active = true;
                                     let mut builder = a11y::TreeBuilder::new(window.state.title())
-                                        .with_announcements(&pending_announcements);
+                                        .with_announcements(&announcements);
                                     ui.operate(&window.renderer, &mut builder);
                                     let tree = builder.build();
                                     window.a11y_node_map = tree.node_map;
@@ -1543,7 +1560,7 @@ fn run_action<'a, P, C>(
     is_window_opening: &mut bool,
     system_theme: &mut theme::Mode,
     renderer_settings: &mut renderer::Settings,
-    pending_announcements: &mut Vec<String>,
+    pending_announcements: &mut Vec<(String, bool)>,
 ) where
     P: Program,
     C: Compositor<Renderer = P::Renderer> + 'static,
@@ -1992,8 +2009,8 @@ fn run_action<'a, P, C>(
                 window.raw.request_redraw();
             }
         }
-        Action::Announce(text) => {
-            pending_announcements.push(text);
+        Action::Announce(text, assertive) => {
+            pending_announcements.push((text, assertive));
         }
         Action::Exit => {
             control_sender

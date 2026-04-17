@@ -25,6 +25,10 @@ use accesskit::{
 };
 use accesskit_winit::Adapter;
 
+/// Re-exports of the [`accesskit`] items consumers of this module
+/// need to construct announcements and other tree data.
+pub use accesskit;
+
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -360,7 +364,7 @@ pub struct TreeBuilder {
     parent_stack: Vec<NodeId>,
     current_accessible: Option<NodeId>,
     focused: Option<NodeId>,
-    announcements: Vec<String>,
+    announcements: Vec<(String, Live)>,
     scroll_offset: Vector,
     /// Pending `labelled_by` cross-node relationships to resolve in `build()`.
     label_refs: Vec<(NodeId, widget::Id)>,
@@ -405,9 +409,11 @@ impl TreeBuilder {
 }
 
 impl TreeBuilder {
-    /// Adds pending announcements that will appear as assertive
-    /// live-region nodes in the tree.
-    pub fn with_announcements(mut self, announcements: &[String]) -> Self {
+    /// Adds pending announcements that will appear as live-region
+    /// nodes in the tree. Each announcement carries a politeness
+    /// hint ([`Live::Polite`] or [`Live::Assertive`]) that maps to
+    /// the corresponding AccessKit [`Live`] value on the emitted node.
+    pub fn with_announcements(mut self, announcements: &[(String, Live)]) -> Self {
         self.announcements = announcements.to_vec();
         self
     }
@@ -465,13 +471,13 @@ impl TreeBuilder {
     /// Consumes the builder and returns the finished [`A11yTree`].
     pub fn build(mut self) -> A11yTree {
         let announcements = std::mem::take(&mut self.announcements);
-        for text in announcements {
+        for (text, politeness) in announcements {
             let id = self.alloc_id(None);
             let mut node = Node::new(Role::Label);
             // Label-role nodes expose their content via `value`, not
             // `label` (accesskit's label_comes_from_value).
             node.set_value(text);
-            node.set_live(Live::Assertive);
+            node.set_live(politeness);
             node.set_bounds(to_accesskit_rect(Rectangle {
                 x: 0.0,
                 y: 0.0,
@@ -1311,13 +1317,23 @@ mod tests {
     #[test]
     fn announcements_appear_as_assertive_labels() {
         let tree = TreeBuilder::new("Test Window")
-            .with_announcements(&["File saved".to_owned()])
+            .with_announcements(&[("File saved".to_owned(), Live::Assertive)])
             .build();
 
         assert_eq!(tree.update.nodes.len(), 2);
         assert_eq!(tree.update.nodes[1].1.role(), Role::Label);
         assert_eq!(tree.update.nodes[1].1.value(), Some("File saved"));
         assert_eq!(tree.update.nodes[1].1.live(), Some(Live::Assertive));
+    }
+
+    #[test]
+    fn announcements_preserve_polite_politeness() {
+        let tree = TreeBuilder::new("Test Window")
+            .with_announcements(&[("Status update".to_owned(), Live::Polite)])
+            .build();
+
+        assert_eq!(tree.update.nodes.len(), 2);
+        assert_eq!(tree.update.nodes[1].1.live(), Some(Live::Polite));
     }
 
     // --- Comprehensive TreeBuilder edge cases ---
@@ -1800,17 +1816,23 @@ mod tests {
     #[test]
     fn multiple_announcements_all_added() {
         let tree = TreeBuilder::new("Test Window")
-            .with_announcements(&["First".to_owned(), "Second".to_owned()])
+            .with_announcements(&[
+                ("First".to_owned(), Live::Assertive),
+                ("Second".to_owned(), Live::Polite),
+            ])
             .build();
 
         assert_eq!(tree.update.nodes.len(), 3);
         assert_eq!(tree.update.nodes[1].1.value(), Some("First"));
+        assert_eq!(tree.update.nodes[1].1.live(), Some(Live::Assertive));
         assert_eq!(tree.update.nodes[2].1.value(), Some("Second"));
+        assert_eq!(tree.update.nodes[2].1.live(), Some(Live::Polite));
     }
 
     #[test]
     fn announcements_coexist_with_widget_nodes() {
-        let mut builder = TreeBuilder::new("Test Window").with_announcements(&["Alert".to_owned()]);
+        let mut builder = TreeBuilder::new("Test Window")
+            .with_announcements(&[("Alert".to_owned(), Live::Assertive)]);
 
         builder.accessible(
             None,

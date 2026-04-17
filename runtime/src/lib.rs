@@ -69,9 +69,11 @@ pub enum Action<T> {
 
     /// Announce a message to assistive technology via a live region.
     ///
-    /// The text will be spoken by screen readers using an assertive
-    /// live-region announcement on the next accessibility tree update.
-    Announce(String),
+    /// The text will be spoken by screen readers on the next
+    /// accessibility tree update. The boolean flag selects politeness:
+    /// `true` for assertive (interrupts current announcement),
+    /// `false` for polite (waits for a gap).
+    Announce(String, bool),
 
     /// Exits the runtime.
     ///
@@ -99,7 +101,7 @@ impl<T> Action<T> {
             Action::Tick => Err(Action::Tick),
             Action::Reload => Err(Action::Reload),
             Action::Exit => Err(Action::Exit),
-            Action::Announce(text) => Err(Action::Announce(text)),
+            Action::Announce(text, assertive) => Err(Action::Announce(text, assertive)),
         }
     }
 }
@@ -130,8 +132,8 @@ where
             Action::Tick => write!(f, "Action::Tick"),
             Action::Reload => write!(f, "Action::Reload"),
             Action::Exit => write!(f, "Action::Exit"),
-            Action::Announce(text) => {
-                write!(f, "Action::Announce({text:?})")
+            Action::Announce(text, assertive) => {
+                write!(f, "Action::Announce({text:?}, assertive: {assertive})")
             }
         }
     }
@@ -140,11 +142,25 @@ where
 /// Creates a [`Task`] that announces the given text to assistive
 /// technology via a live region.
 ///
-/// Screen readers will speak the text using an assertive announcement.
+/// Screen readers will speak the text using an assertive announcement
+/// (interrupting any announcement currently in progress). For less
+/// urgent text, use [`announce_polite`] instead.
 #[cfg(feature = "a11y")]
 #[cfg_attr(docsrs, doc(cfg(feature = "a11y")))]
 pub fn announce<T>(text: impl Into<String>) -> Task<T> {
-    task::effect(Action::Announce(text.into()))
+    task::effect(Action::Announce(text.into(), true))
+}
+
+/// Creates a [`Task`] that announces the given text to assistive
+/// technology via a polite live region.
+///
+/// Screen readers will speak the text after a gap in the user's
+/// current announcement. This is the correct choice for most
+/// toast-style feedback (saves, confirmations, counts).
+#[cfg(feature = "a11y")]
+#[cfg_attr(docsrs, doc(cfg(feature = "a11y")))]
+pub fn announce_polite<T>(text: impl Into<String>) -> Task<T> {
+    task::effect(Action::Announce(text.into(), false))
 }
 
 /// Creates a [`Task`] that exits the iced runtime.

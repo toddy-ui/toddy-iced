@@ -268,7 +268,7 @@ impl<P: Program + 'static> Emulator<P> {
                 runtime::Action::Reload => {
                     // TODO
                 }
-                runtime::Action::Announce(_) => {}
+                runtime::Action::Announce(_, _) => {}
             },
         }
     }
