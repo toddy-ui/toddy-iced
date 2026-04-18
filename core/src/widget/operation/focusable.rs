@@ -986,6 +986,298 @@ where
     )
 }
 
+/// The direction in which [`focus_peer_in_list`] cycles focus.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Direction {
+    /// Move focus to the previous entry in the list.
+    Previous,
+    /// Move focus to the next entry in the list.
+    Next,
+}
+
+/// Intermediate result from [`focus_peer_in_list`]'s lookup phase.
+///
+/// Carries the resolved peer [`Id`] (if one could be found) through to
+/// the focus phase.
+#[derive(Debug, Clone)]
+struct PeerTarget {
+    candidate: Option<Id>,
+}
+
+/// Produces an [`Operation`] that moves focus to the next or previous
+/// [`Id`] in `ids`, relative to whichever entry currently owns focus.
+///
+/// Each id may be either:
+/// - the [`Id`] of a focusable widget (matched directly), or
+/// - the [`Id`] of a [`container`](Operation::container) whose focusable
+///   descendants are treated as owning the slot.
+///
+/// This mirrors how ids are declared on the host tree: widgets that
+/// wrap their internal focusable state in a titled container (e.g.
+/// [`Radio`]) expose the container id to the outside world, while
+/// widgets whose focusable is itself addressable (e.g. text input) use
+/// that id directly.
+///
+/// [`Radio`]: crate::widget::operation::accessible::Role::RadioButton
+///
+/// Intended for ARIA-style peer navigation, such as standalone radio
+/// buttons declaring a shared group via `a11y.radio_group`. Wraps on
+/// both ends.
+///
+/// Does nothing when:
+/// - `ids` is empty.
+/// - No currently-focused widget is found, or the focused widget is
+///   not a descendant of any slot in `ids`.
+/// - The resolved peer slot has no focusable descendant in the current
+///   tree (e.g. the widget is disabled or no longer mounted).
+pub fn focus_peer_in_list<T>(
+    ids: &[Id],
+    direction: Direction,
+) -> impl Operation<T> + use<T>
+where
+    T: Send + 'static,
+{
+    /// First phase: walk the tree, maintain a stack of currently-open
+    /// slot indices, record which slot owns the focused widget, and
+    /// track which slots are actually mounted in the tree (so the
+    /// candidate selection can skip slots that aren't present).
+    struct FindPeer {
+        ids: Vec<Id>,
+        direction: Direction,
+        /// Slot recorded during the most recent matching `container`
+        /// call, promoted to [`slot_stack`] by the next `traverse`.
+        pending_slot: Option<usize>,
+        /// Stack of slot indices for currently-open containers matching
+        /// an entry in `ids`. The innermost entry wins when descendants
+        /// announce a focused focusable without its own id.
+        slot_stack: Vec<usize>,
+        /// Index into `ids` for the slot owning the focused widget.
+        focused_slot: Option<usize>,
+        /// Which slots we've seen mounted in the tree (either as a
+        /// direct focusable or a container wrapping a focusable).
+        seen: Vec<bool>,
+    }
+
+    impl FindPeer {
+        fn slot_for(&self, id: Option<&Id>) -> Option<usize> {
+            id.and_then(|id| self.ids.iter().position(|peer| peer == id))
+        }
+    }
+
+    impl Operation<PeerTarget> for FindPeer {
+        fn container(&mut self, id: Option<&Id>, _bounds: Rectangle) {
+            if let Some(slot) = self.slot_for(id) {
+                self.pending_slot = Some(slot);
+            }
+        }
+
+        fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation<PeerTarget>)) {
+            let pushed = self.pending_slot.take();
+            if let Some(slot) = pushed {
+                self.slot_stack.push(slot);
+            }
+            operate(self);
+            if pushed.is_some() {
+                let _ = self.slot_stack.pop();
+            }
+        }
+
+        fn focusable(&mut self, id: Option<&Id>, _bounds: Rectangle, state: &mut dyn Focusable) {
+            // Mark the owning slot as mounted, whether it matches by
+            // the focusable's own id or by an enclosing container.
+            if let Some(slot) = self.slot_for(id) {
+                self.seen[slot] = true;
+            }
+            if let Some(&slot) = self.slot_stack.last() {
+                self.seen[slot] = true;
+            }
+
+            if !state.is_focused() || self.focused_slot.is_some() {
+                return;
+            }
+
+            if let Some(slot) = self.slot_for(id) {
+                self.focused_slot = Some(slot);
+            } else if let Some(&slot) = self.slot_stack.last() {
+                self.focused_slot = Some(slot);
+            }
+        }
+
+        fn finish(&self) -> Outcome<PeerTarget> {
+            let total = self.ids.len();
+            let candidate = self.focused_slot.and_then(|current| {
+                if total == 0 {
+                    return None;
+                }
+
+                // Step from `current` in the chosen direction looking
+                // for the nearest mounted peer. Skip slots that are
+                // not present in the tree (e.g. disabled or not
+                // currently rendered). Wrap on both ends.
+                let step = |idx: usize| -> usize {
+                    match self.direction {
+                        Direction::Next => (idx + 1) % total,
+                        Direction::Previous => (idx + total - 1) % total,
+                    }
+                };
+
+                let mut cursor = step(current);
+                while cursor != current {
+                    if self.seen[cursor] {
+                        return Some(self.ids[cursor].clone());
+                    }
+                    cursor = step(cursor);
+                }
+
+                None
+            });
+
+            Outcome::Some(PeerTarget { candidate })
+        }
+    }
+
+    /// Second phase: walk the tree, focus the first focusable
+    /// descendant of the target slot, and unfocus every other
+    /// focusable widget. Unlike [`focus`], this operation does not
+    /// require the target widget to carry its own [`Id`]: it accepts
+    /// any focusable whose ancestor container id matches the target.
+    struct ApplyPeer {
+        target: Option<Id>,
+        /// Matches `pending_slot` on the first phase: captured in
+        /// `container`, promoted by the next `traverse`.
+        pending_in_slot: bool,
+        /// Depth of nested matches for the target container id.
+        in_slot_depth: usize,
+        /// Set once we've focused a descendant of the target slot, to
+        /// avoid focusing a second sibling focusable if one exists.
+        focused_one: bool,
+    }
+
+    impl<T> Operation<T> for ApplyPeer
+    where
+        T: Send + 'static,
+    {
+        fn container(&mut self, id: Option<&Id>, _bounds: Rectangle) {
+            if let (Some(id), Some(target)) = (id, &self.target)
+                && id == target
+            {
+                self.pending_in_slot = true;
+            }
+        }
+
+        fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation<T>)) {
+            let entered = std::mem::take(&mut self.pending_in_slot);
+            if entered {
+                self.in_slot_depth += 1;
+            }
+            operate(self);
+            if entered {
+                self.in_slot_depth -= 1;
+            }
+        }
+
+        fn focusable(&mut self, id: Option<&Id>, _bounds: Rectangle, state: &mut dyn Focusable) {
+            let Some(target) = &self.target else {
+                // No target resolved: leave focus state alone.
+                return;
+            };
+
+            // Direct id match or first descendant of the target slot
+            // becomes the new focus holder.
+            let matches = id == Some(target) || self.in_slot_depth > 0;
+
+            if matches && !self.focused_one {
+                state.focus();
+                self.focused_one = true;
+            } else {
+                state.unfocus();
+            }
+        }
+    }
+
+    let total = ids.len();
+
+    operation::then(
+        FindPeer {
+            ids: ids.to_vec(),
+            direction,
+            pending_slot: None,
+            slot_stack: Vec::new(),
+            focused_slot: None,
+            seen: vec![false; total],
+        },
+        |target| ApplyPeer {
+            target: target.candidate,
+            pending_in_slot: false,
+            in_slot_depth: 0,
+            focused_one: false,
+        },
+    )
+}
+
+/// Produces an [`Operation`] that finds the currently focused widget
+/// and returns its declared `a11y.radio_group` peer list, if any.
+///
+/// The list is returned exactly as the widget declared it: no
+/// filtering, no validation, and no check that the focused widget's
+/// own [`Id`] appears in the list. Callers that intend to cycle focus
+/// through the list should hand it to [`focus_peer_in_list`], which
+/// performs its own tree-presence check.
+pub fn find_focused_radio_group() -> impl Operation<Vec<Id>> {
+    struct FindFocusedRadioGroup {
+        last_accessible_bounds: Option<Rectangle>,
+        last_accessible_peers: Option<Vec<Id>>,
+        result: Option<Vec<Id>>,
+    }
+
+    impl Operation<Vec<Id>> for FindFocusedRadioGroup {
+        fn accessible(
+            &mut self,
+            _id: Option<&Id>,
+            bounds: Rectangle,
+            accessible: &Accessible<'_>,
+        ) {
+            // A widget with accessibility metadata calls `accessible`
+            // immediately before its sibling traits (`focusable`,
+            // `text`, etc.), so we stash the most recent values and
+            // correlate on the next `focusable` call.
+            self.last_accessible_bounds = Some(bounds);
+            self.last_accessible_peers = accessible.radio_group.map(|ids| ids.to_vec());
+        }
+
+        fn focusable(&mut self, _id: Option<&Id>, bounds: Rectangle, state: &mut dyn Focusable) {
+            if !state.is_focused() || self.result.is_some() {
+                return;
+            }
+
+            if self.last_accessible_bounds == Some(bounds)
+                && let Some(peers) = &self.last_accessible_peers
+            {
+                self.result = Some(peers.clone());
+            }
+        }
+
+        fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation<Vec<Id>>)) {
+            if self.result.is_none() {
+                operate(self);
+            }
+        }
+
+        fn finish(&self) -> Outcome<Vec<Id>> {
+            match &self.result {
+                Some(peers) => Outcome::Some(peers.clone()),
+                None => Outcome::None,
+            }
+        }
+    }
+
+    FindFocusedRadioGroup {
+        last_accessible_bounds: None,
+        last_accessible_peers: None,
+        result: None,
+    }
+}
+
 /// The result of a successful mnemonic lookup.
 #[derive(Debug, Clone)]
 pub struct MnemonicTarget {
@@ -1130,5 +1422,234 @@ mod tests {
             (scroll_y - 0.0).abs() < 0.1,
             "back to btn1: expected ~0, got {scroll_y}"
         );
+    }
+
+    // ---------------------------------------------------------------
+    // focus_peer_in_list tests
+    //
+    // Operations are exercised directly by synthesising the container
+    // / focusable / traverse call sequence a real widget tree would
+    // produce. Each "radio slot" is modelled as a container with an
+    // [`Id`] wrapping a single anonymous focusable, matching Plushie's
+    // layout for standalone radios.
+    // ---------------------------------------------------------------
+
+    struct FakeFocusable {
+        is_focused: bool,
+    }
+
+    impl Focusable for FakeFocusable {
+        fn is_focused(&self) -> bool {
+            self.is_focused
+        }
+
+        fn focus(&mut self) {
+            self.is_focused = true;
+        }
+
+        fn unfocus(&mut self) {
+            self.is_focused = false;
+        }
+    }
+
+    /// A single radio slot: a named container wrapping one focusable.
+    struct Slot {
+        id: Id,
+        state: FakeFocusable,
+    }
+
+    impl Slot {
+        fn new(name: &str, focused: bool) -> Self {
+            Self {
+                id: Id::from(name.to_string()),
+                state: FakeFocusable {
+                    is_focused: focused,
+                },
+            }
+        }
+
+        /// Drive the operation for this slot, matching how the real
+        /// container + radio pair would call into `operate`.
+        fn drive<T>(&mut self, op: &mut dyn Operation<T>) {
+            op.container(Some(&self.id), rect(0.0, 0.0, 10.0, 10.0));
+            op.traverse(&mut |inner| {
+                inner.focusable(None, rect(0.0, 0.0, 10.0, 10.0), &mut self.state);
+            });
+        }
+    }
+
+    /// Drive the operation over a slice of [`Slot`]s, with each slot
+    /// presented in list order at the same nesting depth.
+    fn drive_slots<T>(op: &mut dyn Operation<T>, slots: &mut [Slot]) {
+        for slot in slots.iter_mut() {
+            slot.drive(op);
+        }
+    }
+
+    /// Run an [`Operation`] to completion, draining any chained phases
+    /// the same way `runtime::keyboard::run_operation` does for real.
+    fn run_to_completion(slots: &mut [Slot], mut op: Box<dyn Operation<()>>) {
+        loop {
+            drive_slots(&mut *op, slots);
+            match op.finish() {
+                Outcome::Chain(next) => op = next,
+                _ => break,
+            }
+        }
+    }
+
+    fn focused_slot_names(slots: &[Slot]) -> Vec<String> {
+        slots
+            .iter()
+            .filter(|s| s.state.is_focused)
+            .map(|s| s.id.to_string())
+            .collect()
+    }
+
+    #[test]
+    fn focus_peer_in_list_next_moves_to_next_peer() {
+        let ids = vec![
+            Id::from("r1".to_string()),
+            Id::from("r2".to_string()),
+            Id::from("r3".to_string()),
+        ];
+        let mut slots = vec![
+            Slot::new("r1", true),
+            Slot::new("r2", false),
+            Slot::new("r3", false),
+        ];
+
+        let op: Box<dyn Operation<()>> =
+            Box::new(focus_peer_in_list::<()>(&ids, Direction::Next));
+        run_to_completion(&mut slots, op);
+
+        assert_eq!(focused_slot_names(&slots), vec!["r2"]);
+    }
+
+    #[test]
+    fn focus_peer_in_list_previous_moves_to_previous_peer() {
+        let ids = vec![
+            Id::from("r1".to_string()),
+            Id::from("r2".to_string()),
+            Id::from("r3".to_string()),
+        ];
+        let mut slots = vec![
+            Slot::new("r1", false),
+            Slot::new("r2", true),
+            Slot::new("r3", false),
+        ];
+
+        let op: Box<dyn Operation<()>> =
+            Box::new(focus_peer_in_list::<()>(&ids, Direction::Previous));
+        run_to_completion(&mut slots, op);
+
+        assert_eq!(focused_slot_names(&slots), vec!["r1"]);
+    }
+
+    #[test]
+    fn focus_peer_in_list_wraps_forward_from_last_to_first() {
+        let ids = vec![
+            Id::from("r1".to_string()),
+            Id::from("r2".to_string()),
+            Id::from("r3".to_string()),
+        ];
+        let mut slots = vec![
+            Slot::new("r1", false),
+            Slot::new("r2", false),
+            Slot::new("r3", true),
+        ];
+
+        let op: Box<dyn Operation<()>> =
+            Box::new(focus_peer_in_list::<()>(&ids, Direction::Next));
+        run_to_completion(&mut slots, op);
+
+        assert_eq!(focused_slot_names(&slots), vec!["r1"]);
+    }
+
+    #[test]
+    fn focus_peer_in_list_wraps_backward_from_first_to_last() {
+        let ids = vec![
+            Id::from("r1".to_string()),
+            Id::from("r2".to_string()),
+            Id::from("r3".to_string()),
+        ];
+        let mut slots = vec![
+            Slot::new("r1", true),
+            Slot::new("r2", false),
+            Slot::new("r3", false),
+        ];
+
+        let op: Box<dyn Operation<()>> =
+            Box::new(focus_peer_in_list::<()>(&ids, Direction::Previous));
+        run_to_completion(&mut slots, op);
+
+        assert_eq!(focused_slot_names(&slots), vec!["r3"]);
+    }
+
+    #[test]
+    fn focus_peer_in_list_no_op_when_focused_widget_not_in_list() {
+        // r2 is focused but is not declared as a peer of r1 / r3, so
+        // arrow navigation should not move focus.
+        let ids = vec![Id::from("r1".to_string()), Id::from("r3".to_string())];
+        let mut slots = vec![
+            Slot::new("r1", false),
+            Slot::new("r2", true),
+            Slot::new("r3", false),
+        ];
+
+        let op: Box<dyn Operation<()>> =
+            Box::new(focus_peer_in_list::<()>(&ids, Direction::Next));
+        run_to_completion(&mut slots, op);
+
+        assert_eq!(focused_slot_names(&slots), vec!["r2"]);
+    }
+
+    #[test]
+    fn focus_peer_in_list_no_op_when_list_empty() {
+        let ids: Vec<Id> = Vec::new();
+        let mut slots = vec![
+            Slot::new("r1", true),
+            Slot::new("r2", false),
+            Slot::new("r3", false),
+        ];
+
+        let op: Box<dyn Operation<()>> =
+            Box::new(focus_peer_in_list::<()>(&ids, Direction::Next));
+        run_to_completion(&mut slots, op);
+
+        assert_eq!(focused_slot_names(&slots), vec!["r1"]);
+    }
+
+    #[test]
+    fn focus_peer_in_list_no_op_when_list_has_single_peer() {
+        // Single-item list: next and previous both wrap back to the
+        // same slot, which the operation treats as a no-op.
+        let ids = vec![Id::from("r1".to_string())];
+        let mut slots = vec![
+            Slot::new("r1", true),
+            Slot::new("r2", false),
+            Slot::new("r3", false),
+        ];
+
+        let op: Box<dyn Operation<()>> =
+            Box::new(focus_peer_in_list::<()>(&ids, Direction::Next));
+        run_to_completion(&mut slots, op);
+
+        assert_eq!(focused_slot_names(&slots), vec!["r1"]);
+    }
+
+    #[test]
+    fn focus_peer_in_list_no_op_when_resolved_peer_absent_from_tree() {
+        // r1 is focused, r2 is declared as its peer, but r2 is not
+        // actually mounted. Focus should not move (and nothing should
+        // get mistakenly unfocused either).
+        let ids = vec![Id::from("r1".to_string()), Id::from("r2".to_string())];
+        let mut slots = vec![Slot::new("r1", true), Slot::new("r3", false)];
+
+        let op: Box<dyn Operation<()>> =
+            Box::new(focus_peer_in_list::<()>(&ids, Direction::Next));
+        run_to_completion(&mut slots, op);
+
+        assert_eq!(focused_slot_names(&slots), vec!["r1"]);
     }
 }
