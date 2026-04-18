@@ -172,12 +172,18 @@ where
             self.raw
                 .update(&events, self.cursor, &mut self.renderer, &mut self.messages);
 
-        // Post-process Tab for focus navigation, matching the behavior
-        // of the winit event loop. Without this, Tab key events don't
-        // advance focus between widgets.
+        // Post-process keyboard navigation, matching the behavior of
+        // the winit event loop. Without this, Tab and arrow keys
+        // don't advance focus or cycle through radio peers.
         for (event, &status) in events.iter().zip(statuses.iter()) {
             let _ =
                 crate::runtime::keyboard::handle_tab(event, status, &mut self.raw, &self.renderer);
+            let _ = crate::runtime::keyboard::handle_radio_arrow(
+                event,
+                status,
+                &mut self.raw,
+                &self.renderer,
+            );
         }
 
         statuses

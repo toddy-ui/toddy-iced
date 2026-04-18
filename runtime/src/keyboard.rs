@@ -249,6 +249,93 @@ where
     None
 }
 
+/// Handle plain arrow keys for radio-group peer cycling.
+///
+/// Implements the WAI-ARIA "radio" pattern for standalone radio
+/// buttons declaring peers via `a11y.radio_group`:
+/// - ArrowDown / ArrowRight moves focus to the next peer in the list.
+/// - ArrowUp / ArrowLeft moves focus to the previous peer.
+/// - Both directions wrap on the ends.
+/// - Only plain arrows are consumed; arrow keys combined with any
+///   modifier (Shift, Ctrl, Alt, or Meta / logo) fall through so that
+///   scroll-key handling and other modifier-driven shortcuts still
+///   work unchanged.
+///
+/// Does nothing and returns `false` when:
+/// - The focused widget has no `a11y.radio_group` declared (or it's
+///   empty).
+/// - The focused widget is not itself a peer of any slot in its
+///   declared list.
+/// - The resolved peer slot is not currently mounted in the tree.
+///
+/// Returns `true` if focus moved (and the event should be treated as
+/// consumed).
+pub fn handle_radio_arrow<Message, Theme, Renderer>(
+    event: &core::Event,
+    status: core::event::Status,
+    ui: &mut UserInterface<'_, Message, Theme, Renderer>,
+    renderer: &Renderer,
+) -> bool
+where
+    Renderer: core::Renderer,
+{
+    if status != core::event::Status::Ignored {
+        return false;
+    }
+
+    let core::Event::Keyboard(core::keyboard::Event::KeyPressed {
+        key: core::keyboard::Key::Named(named),
+        modifiers,
+        ..
+    }) = event
+    else {
+        return false;
+    };
+
+    if modifiers.shift() || modifiers.control() || modifiers.alt() || modifiers.logo() {
+        return false;
+    }
+
+    let direction = match named {
+        core::keyboard::key::Named::ArrowDown | core::keyboard::key::Named::ArrowRight => {
+            operation::focusable::Direction::Next
+        }
+        core::keyboard::key::Named::ArrowUp | core::keyboard::key::Named::ArrowLeft => {
+            operation::focusable::Direction::Previous
+        }
+        _ => return false,
+    };
+
+    // Phase 1: ask the tree for the focused widget's declared peer
+    // list. If none, we have nothing to do.
+    let mut find = operation::focusable::find_focused_radio_group();
+    ui.operate(renderer, &mut operation::black_box::<_, ()>(&mut find));
+
+    let peers = match find.finish() {
+        operation::Outcome::Some(peers) if !peers.is_empty() => peers,
+        _ => return false,
+    };
+
+    // Phase 2: move focus to the resolved peer.
+    run_operation(
+        ui,
+        renderer,
+        Box::new(operation::focusable::focus_peer_in_list::<()>(
+            &peers, direction,
+        )),
+    );
+
+    // Scroll the newly focused peer into view so long radio lists
+    // behave like every other focus move.
+    run_operation(
+        ui,
+        renderer,
+        Box::new(operation::focusable::scroll_focused_into_view::<()>()),
+    );
+
+    true
+}
+
 /// Handle uncaptured scroll keys for focused ancestor scrolling.
 ///
 /// Maps keyboard scroll keys (Page Up/Down, arrows, Home/End, and

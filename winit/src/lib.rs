@@ -1309,6 +1309,12 @@ async fn run_instance<P>(
                                         ui,
                                         &window.renderer,
                                     ) || tab_handled
+                                        || runtime::keyboard::handle_radio_arrow(
+                                            &event,
+                                            status,
+                                            ui,
+                                            &window.renderer,
+                                        )
                                         || runtime::keyboard::handle_scroll_keys(
                                             &event,
                                             status,
