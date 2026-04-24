@@ -1030,10 +1030,7 @@ struct PeerTarget {
 ///   not a descendant of any slot in `ids`.
 /// - The resolved peer slot has no focusable descendant in the current
 ///   tree (e.g. the widget is disabled or no longer mounted).
-pub fn focus_peer_in_list<T>(
-    ids: &[Id],
-    direction: Direction,
-) -> impl Operation<T> + use<T>
+pub fn focus_peer_in_list<T>(ids: &[Id], direction: Direction) -> impl Operation<T> + use<T>
 where
     T: Send + 'static,
 {
@@ -1231,18 +1228,13 @@ pub fn find_focused_radio_group() -> impl Operation<Vec<Id>> {
     }
 
     impl Operation<Vec<Id>> for FindFocusedRadioGroup {
-        fn accessible(
-            &mut self,
-            _id: Option<&Id>,
-            bounds: Rectangle,
-            accessible: &Accessible<'_>,
-        ) {
+        fn accessible(&mut self, _id: Option<&Id>, bounds: Rectangle, accessible: &Accessible<'_>) {
             // A widget with accessibility metadata calls `accessible`
             // immediately before its sibling traits (`focusable`,
             // `text`, etc.), so we stash the most recent values and
             // correlate on the next `focusable` call.
             self.last_accessible_bounds = Some(bounds);
-            self.last_accessible_peers = accessible.radio_group.map(|ids| ids.to_vec());
+            self.last_accessible_peers = accessible.radio_group.map(<[Id]>::to_vec);
         }
 
         fn focusable(&mut self, _id: Option<&Id>, bounds: Rectangle, state: &mut dyn Focusable) {
@@ -1519,8 +1511,7 @@ mod tests {
             Slot::new("r3", false),
         ];
 
-        let op: Box<dyn Operation<()>> =
-            Box::new(focus_peer_in_list::<()>(&ids, Direction::Next));
+        let op: Box<dyn Operation<()>> = Box::new(focus_peer_in_list::<()>(&ids, Direction::Next));
         run_to_completion(&mut slots, op);
 
         assert_eq!(focused_slot_names(&slots), vec!["r2"]);
@@ -1559,8 +1550,7 @@ mod tests {
             Slot::new("r3", true),
         ];
 
-        let op: Box<dyn Operation<()>> =
-            Box::new(focus_peer_in_list::<()>(&ids, Direction::Next));
+        let op: Box<dyn Operation<()>> = Box::new(focus_peer_in_list::<()>(&ids, Direction::Next));
         run_to_completion(&mut slots, op);
 
         assert_eq!(focused_slot_names(&slots), vec!["r1"]);
@@ -1597,8 +1587,7 @@ mod tests {
             Slot::new("r3", false),
         ];
 
-        let op: Box<dyn Operation<()>> =
-            Box::new(focus_peer_in_list::<()>(&ids, Direction::Next));
+        let op: Box<dyn Operation<()>> = Box::new(focus_peer_in_list::<()>(&ids, Direction::Next));
         run_to_completion(&mut slots, op);
 
         assert_eq!(focused_slot_names(&slots), vec!["r2"]);
@@ -1613,8 +1602,7 @@ mod tests {
             Slot::new("r3", false),
         ];
 
-        let op: Box<dyn Operation<()>> =
-            Box::new(focus_peer_in_list::<()>(&ids, Direction::Next));
+        let op: Box<dyn Operation<()>> = Box::new(focus_peer_in_list::<()>(&ids, Direction::Next));
         run_to_completion(&mut slots, op);
 
         assert_eq!(focused_slot_names(&slots), vec!["r1"]);
@@ -1631,8 +1619,7 @@ mod tests {
             Slot::new("r3", false),
         ];
 
-        let op: Box<dyn Operation<()>> =
-            Box::new(focus_peer_in_list::<()>(&ids, Direction::Next));
+        let op: Box<dyn Operation<()>> = Box::new(focus_peer_in_list::<()>(&ids, Direction::Next));
         run_to_completion(&mut slots, op);
 
         assert_eq!(focused_slot_names(&slots), vec!["r1"]);
@@ -1646,8 +1633,7 @@ mod tests {
         let ids = vec![Id::from("r1".to_string()), Id::from("r2".to_string())];
         let mut slots = vec![Slot::new("r1", true), Slot::new("r3", false)];
 
-        let op: Box<dyn Operation<()>> =
-            Box::new(focus_peer_in_list::<()>(&ids, Direction::Next));
+        let op: Box<dyn Operation<()>> = Box::new(focus_peer_in_list::<()>(&ids, Direction::Next));
         run_to_completion(&mut slots, op);
 
         assert_eq!(focused_slot_names(&slots), vec!["r1"]);

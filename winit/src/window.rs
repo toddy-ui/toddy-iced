@@ -21,6 +21,7 @@ use winit::dpi::{LogicalPosition, LogicalSize};
 use winit::monitor::MonitorHandle;
 
 use std::collections::BTreeMap;
+use std::ops::Range;
 use std::sync::Arc;
 
 pub struct WindowManager<P, C>
@@ -365,17 +366,17 @@ where
             ..background
         };
 
-        let spans = match &preedit.selection {
-            Some(selection) => {
+        let spans = match preedit_selection_bounds(&preedit.content, &preedit.selection) {
+            Some((start, end)) => {
                 vec![
-                    text::Span::new(&preedit.content[..selection.start]),
-                    text::Span::new(if selection.start == selection.end {
+                    text::Span::new(&preedit.content[..start]),
+                    text::Span::new(if start == end {
                         "\u{200A}"
                     } else {
-                        &preedit.content[selection.start..selection.end]
+                        &preedit.content[start..end]
                     })
                     .color(background),
-                    text::Span::new(&preedit.content[selection.end..]),
+                    text::Span::new(&preedit.content[end..]),
                 ]
             }
             _ => vec![text::Span::new(&preedit.content)],
@@ -465,5 +466,83 @@ where
                 );
             }
         });
+    }
+}
+
+fn preedit_selection_bounds(
+    content: &str,
+    selection: &Option<Range<usize>>,
+) -> Option<(usize, usize)> {
+    let selection = selection.as_ref()?;
+
+    let start = selection.start.min(selection.end).min(content.len());
+    let end = selection.start.max(selection.end).min(content.len());
+
+    Some((
+        previous_char_boundary(content, start),
+        next_char_boundary(content, end),
+    ))
+}
+
+fn previous_char_boundary(content: &str, mut index: usize) -> usize {
+    while !content.is_char_boundary(index) {
+        index -= 1;
+    }
+
+    index
+}
+
+fn next_char_boundary(content: &str, mut index: usize) -> usize {
+    while !content.is_char_boundary(index) {
+        index += 1;
+    }
+
+    index
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preedit_selection_uses_valid_utf8_boundaries() {
+        let content = "aあb";
+
+        assert_eq!(preedit_selection_bounds(content, &Some(1..4)), Some((1, 4)));
+    }
+
+    #[test]
+    fn preedit_selection_clamps_invalid_utf8_boundaries() {
+        let content = "aあb";
+
+        assert_eq!(preedit_selection_bounds(content, &Some(2..3)), Some((1, 4)));
+    }
+
+    #[test]
+    fn preedit_selection_normalizes_reversed_ranges() {
+        let content = "aあb";
+        let selection = Range { start: 4, end: 1 };
+
+        assert_eq!(
+            preedit_selection_bounds(content, &Some(selection)),
+            Some((1, 4))
+        );
+    }
+
+    #[test]
+    fn preedit_selection_clamps_out_of_range_bounds() {
+        let content = "aあb";
+
+        assert_eq!(
+            preedit_selection_bounds(content, &Some(1..99)),
+            Some((1, 5))
+        );
+    }
+
+    #[test]
+    fn preedit_selection_keeps_invalid_caret_on_a_boundary() {
+        let content = "aあb";
+
+        assert_eq!(preedit_selection_bounds(content, &Some(2..2)), Some((1, 4)));
     }
 }

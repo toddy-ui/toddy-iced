@@ -82,19 +82,28 @@ impl Value {
     }
 
     /// Inserts a new `char` at the given grapheme `index`.
+    ///
     pub fn insert(&mut self, index: usize, c: char) {
-        self.graphemes.insert(index, c.to_string());
-
-        self.graphemes = UnicodeSegmentation::graphemes(&self.to_string() as &str, true)
-            .map(String::from)
-            .collect();
+        let _ = self.insert_many_at(index, Self::new(&c.to_string()));
     }
 
     /// Inserts a bunch of graphemes at the given grapheme `index`.
-    pub fn insert_many(&mut self, index: usize, mut value: Value) {
-        let _ = self
-            .graphemes
-            .splice(index..index, value.graphemes.drain(..));
+    pub fn insert_many(&mut self, index: usize, value: Value) {
+        let _ = self.insert_many_at(index, value);
+    }
+
+    pub(super) fn insert_many_at(&mut self, index: usize, value: Value) -> usize {
+        let index = index.min(self.len());
+        let before = self.until(index).to_string();
+        let inserted = value.to_string();
+        let after = self.select(index, self.len()).to_string();
+        let before_inserted = format!("{before}{inserted}");
+
+        let cursor = UnicodeSegmentation::graphemes(before_inserted.as_str(), true).count();
+
+        *self = Self::new(&format!("{before_inserted}{after}"));
+
+        cursor.min(self.len())
     }
 
     /// Removes the grapheme at the given `index`.
@@ -119,5 +128,11 @@ impl Value {
 impl std::fmt::Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.graphemes.concat())
+    }
+}
+
+impl From<&str> for Value {
+    fn from(value: &str) -> Self {
+        Self::new(value)
     }
 }

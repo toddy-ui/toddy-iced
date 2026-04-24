@@ -224,10 +224,7 @@ where
     ///
     /// The callback receives the new status name as a string
     /// (e.g. "active", "hovered", "focused", "disabled").
-    pub fn on_status_change(
-        mut self,
-        f: impl Fn(&str) -> Message + 'a,
-    ) -> Self {
+    pub fn on_status_change(mut self, f: impl Fn(&str) -> Message + 'a) -> Self {
         self.on_status_change = Some(Box::new(f));
         self
     }
@@ -455,20 +452,18 @@ where
             }
         };
 
-        let new_name = status_name(&current_status);
-        let old_name = self.last_status.as_ref().map(status_name);
-        if old_name != Some(new_name) {
-            if let Some(ref on_status_change) = self.on_status_change {
-                shell.publish(on_status_change(new_name));
-            }
+        let new_name = status_name(current_status);
+        let old_name = self.last_status.map(status_name);
+        if old_name != Some(new_name)
+            && let Some(ref on_status_change) = self.on_status_change
+        {
+            shell.publish(on_status_change(new_name));
         }
 
-        if self.last_status.is_some_and(|s| s != current_status)
-            || self.last_status.is_none()
+        if (self.last_status.is_some_and(|s| s != current_status) || self.last_status.is_none())
+            && !matches!(event, Event::Window(window::Event::RedrawRequested(_)))
         {
-            if !matches!(event, Event::Window(window::Event::RedrawRequested(_))) {
-                shell.request_redraw();
-            }
+            shell.request_redraw();
         }
         self.last_status = Some(current_status);
     }
@@ -626,7 +621,7 @@ pub enum Status {
     },
 }
 
-fn status_name(status: &Status) -> &'static str {
+fn status_name(status: Status) -> &'static str {
     match status {
         Status::Active { .. } => "active",
         Status::Hovered { .. } => "hovered",

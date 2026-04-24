@@ -14,26 +14,24 @@ impl<'a> Editor<'a> {
         self.value.to_string()
     }
 
-    pub fn insert(&mut self, character: char) {
-        if let Some((left, right)) = self.cursor.selection(self.value) {
-            self.cursor.move_left(self.value);
-            self.value.remove_many(left, right);
-        }
-
-        self.value.insert(self.cursor.end(self.value), character);
-        self.cursor.move_right(self.value);
+    pub fn insert(&mut self, content: impl Into<Value>) {
+        self.insert_value(content.into());
     }
 
     pub fn paste(&mut self, content: Value) {
-        let length = content.len();
+        self.insert_value(content);
+    }
+
+    fn insert_value(&mut self, content: Value) {
         if let Some((left, right)) = self.cursor.selection(self.value) {
             self.cursor.move_left(self.value);
             self.value.remove_many(left, right);
         }
 
-        self.value.insert_many(self.cursor.end(self.value), content);
-
-        self.cursor.move_right_by_amount(self.value, length);
+        let cursor = self
+            .value
+            .insert_many_at(self.cursor.end(self.value), content);
+        self.cursor.move_to(cursor);
     }
 
     pub fn backspace(&mut self) {
@@ -66,5 +64,66 @@ impl<'a> Editor<'a> {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::text_input::cursor::State;
+
+    #[test]
+    fn inserting_combining_mark_keeps_cursor_after_combined_grapheme() {
+        let mut value = Value::new("");
+        let mut cursor = Cursor::default();
+
+        let mut editor = Editor::new(&mut value, &mut cursor);
+        editor.insert("e");
+        editor.insert("\u{301}");
+
+        assert_eq!(editor.contents(), "e\u{301}");
+        assert_eq!(value.len(), 1);
+        assert_eq!(cursor.state(&value), State::Index(1));
+
+        let mut editor = Editor::new(&mut value, &mut cursor);
+        editor.backspace();
+
+        assert_eq!(editor.contents(), "");
+        assert_eq!(value.len(), 0);
+        assert_eq!(cursor.state(&value), State::Index(0));
+    }
+
+    #[test]
+    fn inserting_zwj_emoji_keeps_cursor_after_grapheme() {
+        let mut value = Value::new("");
+        let mut cursor = Cursor::default();
+        let emoji = "👨\u{200d}👩\u{200d}👧\u{200d}👦";
+
+        let mut editor = Editor::new(&mut value, &mut cursor);
+        editor.insert(emoji);
+
+        assert_eq!(editor.contents(), emoji);
+        assert_eq!(value.len(), 1);
+        assert_eq!(cursor.state(&value), State::Index(1));
+
+        let mut editor = Editor::new(&mut value, &mut cursor);
+        editor.backspace();
+
+        assert_eq!(editor.contents(), "");
+        assert_eq!(value.len(), 0);
+        assert_eq!(cursor.state(&value), State::Index(0));
+    }
+
+    #[test]
+    fn inserting_before_combining_mark_recomposes_next_grapheme() {
+        let mut value = Value::new("\u{301}");
+        let mut cursor = Cursor::default();
+
+        let mut editor = Editor::new(&mut value, &mut cursor);
+        editor.insert("e");
+
+        assert_eq!(editor.contents(), "e\u{301}");
+        assert_eq!(value.len(), 1);
+        assert_eq!(cursor.state(&value), State::Index(1));
     }
 }
