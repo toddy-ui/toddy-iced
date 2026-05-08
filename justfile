@@ -30,8 +30,11 @@ check-wasm:
 check-widget:
     cargo check --package plushie-iced-widget --features image,svg,canvas
 
+# CI's lint workflow uses stable rust (whatever `setup-rust-action`
+# resolves at the time). Pin to +stable locally so preflight catches
+# new clippy lints introduced in newer compiler releases.
 lint:
-    cargo lint
+    cargo +stable clippy --workspace --benches --all-features --no-deps -- -D warnings
 
 fmt:
     cargo fmt --all -- --check --verbose

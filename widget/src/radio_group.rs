@@ -366,41 +366,33 @@ where
             Event::Keyboard(keyboard::Event::KeyPressed {
                 key: keyboard::Key::Named(key::Named::ArrowDown | key::Named::ArrowRight),
                 ..
-            }) => {
-                if state.is_focused {
-                    state.active_index = (state.active_index + 1) % total;
-                    shell.publish((self.on_select)(self.options[state.active_index].1));
-                    shell.capture_event();
-                }
+            }) if state.is_focused => {
+                state.active_index = (state.active_index + 1) % total;
+                shell.publish((self.on_select)(self.options[state.active_index].1));
+                shell.capture_event();
             }
             Event::Keyboard(keyboard::Event::KeyPressed {
                 key: keyboard::Key::Named(key::Named::ArrowUp | key::Named::ArrowLeft),
                 ..
-            }) => {
-                if state.is_focused {
-                    state.active_index = (state.active_index + total - 1) % total;
-                    shell.publish((self.on_select)(self.options[state.active_index].1));
-                    shell.capture_event();
-                }
+            }) if state.is_focused => {
+                state.active_index = (state.active_index + total - 1) % total;
+                shell.publish((self.on_select)(self.options[state.active_index].1));
+                shell.capture_event();
             }
             Event::Keyboard(keyboard::Event::KeyPressed {
                 key: keyboard::Key::Named(key::Named::Space),
                 ..
-            }) => {
-                if state.is_focused {
-                    shell.publish((self.on_select)(self.options[state.active_index].1));
-                    shell.capture_event();
-                }
+            }) if state.is_focused => {
+                shell.publish((self.on_select)(self.options[state.active_index].1));
+                shell.capture_event();
             }
             Event::Keyboard(keyboard::Event::KeyPressed {
                 key: keyboard::Key::Named(key::Named::Escape),
                 ..
-            }) => {
-                if state.is_focused {
-                    state.is_focused = false;
-                    state.focus_visible = false;
-                    shell.capture_event();
-                }
+            }) if state.is_focused => {
+                state.is_focused = false;
+                state.focus_visible = false;
+                shell.capture_event();
             }
             _ => {}
         }

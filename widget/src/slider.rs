@@ -430,76 +430,72 @@ where
                 }
                 Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
                 | Event::Touch(touch::Event::FingerLifted { .. })
-                | Event::Touch(touch::Event::FingerLost { .. }) => {
-                    if state.is_dragging {
-                        if let Some(on_release) = self.on_release.clone() {
-                            shell.publish(on_release);
-                        }
-                        state.is_dragging = false;
+                | Event::Touch(touch::Event::FingerLost { .. })
+                    if state.is_dragging =>
+                {
+                    if let Some(on_release) = self.on_release.clone() {
+                        shell.publish(on_release);
                     }
+                    state.is_dragging = false;
                 }
                 Event::Mouse(mouse::Event::CursorMoved { .. })
-                | Event::Touch(touch::Event::FingerMoved { .. }) => {
-                    if state.is_dragging {
-                        let _ = cursor.land().position().and_then(locate).map(change);
+                | Event::Touch(touch::Event::FingerMoved { .. })
+                    if state.is_dragging =>
+                {
+                    let _ = cursor.land().position().and_then(locate).map(change);
 
-                        shell.capture_event();
-                    }
+                    shell.capture_event();
                 }
                 Event::Mouse(mouse::Event::WheelScrolled { delta })
-                    if state.keyboard_modifiers.control() =>
+                    if state.keyboard_modifiers.control() && cursor.is_over(layout.bounds()) =>
                 {
-                    if cursor.is_over(layout.bounds()) {
-                        let delta = match delta {
-                            mouse::ScrollDelta::Lines { x: _, y } => y,
-                            mouse::ScrollDelta::Pixels { x: _, y } => y,
-                        };
+                    let delta = match delta {
+                        mouse::ScrollDelta::Lines { x: _, y } => y,
+                        mouse::ScrollDelta::Pixels { x: _, y } => y,
+                    };
 
-                        if *delta < 0.0 {
-                            let _ = decrement(current_value).map(change);
-                        } else {
-                            let _ = increment(current_value).map(change);
-                        }
-
-                        shell.capture_event();
+                    if *delta < 0.0 {
+                        let _ = decrement(current_value).map(change);
+                    } else {
+                        let _ = increment(current_value).map(change);
                     }
+
+                    shell.capture_event();
                 }
-                Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) => {
-                    if cursor.is_over(layout.bounds()) || state.is_focused {
-                        match key {
-                            Key::Named(key::Named::ArrowUp | key::Named::ArrowRight) => {
-                                let _ = increment(current_value).map(change);
-                                shell.capture_event();
-                            }
-                            Key::Named(key::Named::ArrowDown | key::Named::ArrowLeft) => {
-                                let _ = decrement(current_value).map(change);
-                                shell.capture_event();
-                            }
-                            Key::Named(key::Named::PageUp) => {
-                                let _ = page_increment(current_value).map(change);
-                                shell.capture_event();
-                            }
-                            Key::Named(key::Named::PageDown) => {
-                                let _ = page_decrement(current_value).map(change);
-                                shell.capture_event();
-                            }
-                            Key::Named(key::Named::Home) => {
-                                change(*self.range.start());
-                                shell.capture_event();
-                            }
-                            Key::Named(key::Named::End) => {
-                                change(*self.range.end());
-                                shell.capture_event();
-                            }
-                            Key::Named(key::Named::Escape) => {
-                                if state.is_focused {
-                                    state.is_focused = false;
-                                    state.focus_visible = false;
-                                    shell.capture_event();
-                                }
-                            }
-                            _ => (),
+                Event::Keyboard(keyboard::Event::KeyPressed { key, .. })
+                    if cursor.is_over(layout.bounds()) || state.is_focused =>
+                {
+                    match key {
+                        Key::Named(key::Named::ArrowUp | key::Named::ArrowRight) => {
+                            let _ = increment(current_value).map(change);
+                            shell.capture_event();
                         }
+                        Key::Named(key::Named::ArrowDown | key::Named::ArrowLeft) => {
+                            let _ = decrement(current_value).map(change);
+                            shell.capture_event();
+                        }
+                        Key::Named(key::Named::PageUp) => {
+                            let _ = page_increment(current_value).map(change);
+                            shell.capture_event();
+                        }
+                        Key::Named(key::Named::PageDown) => {
+                            let _ = page_decrement(current_value).map(change);
+                            shell.capture_event();
+                        }
+                        Key::Named(key::Named::Home) => {
+                            change(*self.range.start());
+                            shell.capture_event();
+                        }
+                        Key::Named(key::Named::End) => {
+                            change(*self.range.end());
+                            shell.capture_event();
+                        }
+                        Key::Named(key::Named::Escape) if state.is_focused => {
+                            state.is_focused = false;
+                            state.focus_visible = false;
+                            shell.capture_event();
+                        }
+                        _ => (),
                     }
                 }
                 Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) => {
