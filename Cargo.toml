@@ -164,7 +164,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.8.3"
+version = "0.8.4"
 authors = ["Héctor Ramón Jiménez <hector@hecrj.dev>", "Daniel Hedlund <daniel@digitree.org>"]
 edition = "2024"
 license = "MIT"
